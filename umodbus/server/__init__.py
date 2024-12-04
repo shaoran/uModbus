@@ -2,6 +2,8 @@ try:
     from socketserver import BaseRequestHandler
 except ImportError:
     from SocketServer import BaseRequestHandler
+
+import asyncio
 from binascii import hexlify
 
 from abc import ABC, abstractmethod
@@ -12,7 +14,11 @@ from umodbus import log
 from umodbus.functions import create_function_from_request_pdu
 from umodbus.exceptions import ModbusError, ServerDeviceFailureError
 from umodbus.utils import (get_function_code_from_request_pdu,
-                           pack_exception_pdu, recv_exactly)
+                           pack_exception_pdu, recv_exactly,
+                           resolve_awaitable, recv_exactly_async)
+
+
+ASYNC_HANDLER_TASK_MARK =  "__UMODBUS_HANDLER_TASK__"
 
 
 def route(self, slave_ids=None, function_codes=None, addresses=None):
@@ -152,3 +158,94 @@ class AbstractRequestHandler(BaseAbstractRequestHandler, BaseRequestHandler):
         log.debug('--> {0} - {1}.'.format(self.client_address[0],
                   hexlify(response_adu)))
         self.request.sendall(response_adu)
+
+
+
+class AsyncAbstractRequestHandler(BaseAbstractRequestHandler):
+    """ A class similar to :py:class:`AbstractRequestHandler` that
+    dispatches incoming Modbus requests using the server's :attr:`route_map`.
+
+    This is an asyncio implementation of the above class.
+    """
+
+    async def handle_async(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        # marking the current task as a handler task
+        # This allows to cancel this task when the client
+        # leaves the connection open without sending anything,
+        # thus making this task "hang" in await reader.read()
+        task = asyncio.current_task()
+
+        if task is None:
+            raise Exception("The handler is being invoked oustide the asyncio.start_server() context")
+
+        task.set_name(ASYNC_HANDLER_TASK_MARK)
+
+        try:
+            while True:
+                try:
+                    mbap_header = await recv_exactly_async(reader, 7)
+                    remaining = self.get_meta_data(mbap_header)['length'] - 1
+                    request_pdu = await recv_exactly_async(reader, remaining)
+                except ValueError:
+                    return
+
+                response_adu = await self.process(mbap_header + request_pdu)
+
+                writer.write(response_adu)
+                await writer.drain()
+        except asyncio.CancelledError:
+            raise
+        except:
+            log.exception('Error while handling request')
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    async def process(self, request_adu):
+        """ Process request ADU and return response.
+
+        :param request_adu: A bytearray containing the ADU request.
+        :return: A bytearray containing the response of the ADU request.
+        """
+        meta_data = self.get_meta_data(request_adu)
+        request_pdu = self.get_request_pdu(request_adu)
+
+        response_pdu = await self.execute_route(meta_data, request_pdu)
+        response_adu = self.create_response_adu(meta_data, response_pdu)
+
+        return response_adu
+
+    async def execute_route(self, meta_data, request_pdu):
+        """ Execute configured route based on requests meta data and request
+        PDU.
+
+        :param meta_data: A dict with meta data. It must at least contain
+            key 'unit_id'.
+        :param request_pdu: A bytearray containing request PDU.
+        :return: A bytearry containing reponse PDU.
+        """
+        try:
+            function = create_function_from_request_pdu(request_pdu)
+            results =\
+                function.execute(meta_data['unit_id'], self.server.route_map) # type: ignore
+
+            results = await resolve_awaitable(results)
+
+            try:
+                # ReadFunction's use results of callbacks to build response
+                # PDU...
+                return function.create_response_pdu(results)
+            except TypeError:
+                # ...other functions don't.
+                return function.create_response_pdu()
+        except asyncio.CancelledError:
+            raise
+        except ModbusError as e:
+            function_code = get_function_code_from_request_pdu(request_pdu)
+            return pack_exception_pdu(function_code, e.error_code)
+        except Exception:
+            log.exception('Could not handle request')
+            function_code = get_function_code_from_request_pdu(request_pdu)
+
+            return pack_exception_pdu(function_code,
+                                      ServerDeviceFailureError.error_code)
