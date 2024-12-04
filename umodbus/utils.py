@@ -1,8 +1,12 @@
+import asyncio
+import inspect
 import sys
 import struct
 import logging
 from logging import StreamHandler, Formatter
 from functools import wraps
+from typing import Any, List
+from collections.abc import Sequence
 
 from umodbus import log
 
@@ -141,3 +145,63 @@ def recv_exactly(recv_fn, size):
         raise ValueError
 
     return response
+
+
+async def recv_exactly_async(reader: asyncio.StreamReader, size: int) -> bytes:
+    """
+    Use this function to read and return exactly the number of bytes desired.
+
+    :param asyncio.StreamReader reader: a :py:class:`asyncio.StreamReader` as passed to
+        the handler of :py:func:`asyncio.start_server`.
+    :param int size: the number of bytes to be read
+    """
+
+    recv_bytes = 0
+    res = b""
+    while recv_bytes < size:
+        chunk = await reader.read(size - recv_bytes)
+        if len(chunk) == 0:
+            break
+        recv_bytes += len(chunk)
+        res += chunk
+
+    if len(res) != size:
+        raise ValueError(f"Unable to read {size} bytes, read only {len(res)}")
+
+    return res
+
+async def resolve_awaitable(
+    sequence: Sequence[Any], return_exception: bool = False
+) -> List[Any]:
+    """
+    Checks whether the elements of the sequence are awaitable.
+    If they are awaitable, then await it and use the returned value instead.
+    If they are not awaitable, then the original value is used
+
+    Use this method when you get an list that is mix of awaitable and not
+    awaitable objects
+
+    :param sequence: the sequence of objects that might be awaitable
+    :return_exception: If set, replace the value with any exception
+        that might have occurred when awaiting the value. If not set,
+        then the function raises immediately the error. The exception
+        is :py:exception:`asyncio.CancelledError`. This exception is always
+        returned.
+    """
+    result = []
+
+    for seq in sequence:
+        if inspect.isawaitable(seq):
+            try:
+                seq = await seq
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if return_exception:
+                    seq = e
+                else:
+                    raise
+
+        result.append(seq)
+
+    return result
