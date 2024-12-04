@@ -1,8 +1,10 @@
+import asyncio
 import struct
 from types import MethodType
 
 from umodbus.route import Map
-from umodbus.server import AbstractRequestHandler, route
+from umodbus.server import (AbstractRequestHandler, route,
+                            Metadata, AsyncAbstractRequestHandler)
 from umodbus.utils import unpack_mbap, pack_mbap
 from umodbus.exceptions import ServerDeviceFailureError
 
@@ -24,6 +26,24 @@ def get_server(server_class, server_address, request_handler_class):
     s.route = MethodType(route, s)
 
     return s
+
+async def get_server_async(server_address):
+    """ Return instance of :py:class:`asyncio.Server` with routing bound to it
+
+    :param server_address: a tuple with bind address and port
+    :return: Instance of :py:class:`asyncio.Server`
+    """
+
+    hdl = AsyncRequestHandler()
+
+    server = await asyncio.start_server(hdl.handle_async, host=server_address[0], port=server_address[1], reuse_address=True)
+
+    server.route_map = Map()
+    server.route = MethodType(route, server)
+
+    hdl.server = server
+
+    return server
 
 
 class RequestHandler(AbstractRequestHandler):
