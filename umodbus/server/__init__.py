@@ -125,7 +125,7 @@ class AbstractRequestHandler(BaseAbstractRequestHandler, BaseRequestHandler):
         try:
             function = create_function_from_request_pdu(request_pdu)
             results =\
-                function.execute(meta_data['unit_id'], self.server.route_map)
+                function.execute(meta_data['unit_id'], self.server.route_map) # type: ignore
 
             try:
                 # ReadFunction's use results of callbacks to build response
