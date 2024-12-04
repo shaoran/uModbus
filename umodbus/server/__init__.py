@@ -4,6 +4,10 @@ except ImportError:
     from SocketServer import BaseRequestHandler
 from binascii import hexlify
 
+from abc import ABC, abstractmethod
+from typing import TypedDict
+from collections.abc import ByteString
+
 from umodbus import log
 from umodbus.functions import create_function_from_request_pdu
 from umodbus.exceptions import ModbusError, ServerDeviceFailureError
@@ -32,7 +36,49 @@ def route(self, slave_ids=None, function_codes=None, addresses=None):
     return inner
 
 
-class AbstractRequestHandler(BaseRequestHandler):
+class Metadata(TypedDict):
+    transaction_id: int
+    protocol_id: int
+    length: int
+    unit_id: int
+
+
+class BaseAbstractRequestHandler(ABC):
+    """
+    An abstract class that defines the interface of how to
+    parse the modbus request and construct a response
+    """
+    @abstractmethod
+    def get_meta_data(self, request_adu: ByteString) -> Metadata:
+        """" Extract MBAP header from request adu and return it. The dict has
+        4 keys: transaction_id, protocol_id, length and unit_id.
+
+        :param request_adu: A bytearray containing request ADU.
+        :return: Dict with meta data of request.
+        """
+        ...
+
+    @abstractmethod
+    def get_request_pdu(self, request_adu: ByteString) -> ByteString:
+        """ Extract PDU from request ADU and return it.
+
+        :param request_adu: A bytearray containing request ADU.
+        :return: An bytearray container request PDU.
+        """
+        ...
+
+    @abstractmethod
+    def create_response_adu(self, meta_data: Metadata, response_pdu: ByteString) -> ByteString:
+        """ Build response ADU from meta data and response PDU and return it.
+
+        :param meta_data: A dict with meta data.
+        :param request_pdu: A bytearray containing request PDU.
+        :return: A bytearray containing request ADU.
+        """
+        ...
+
+
+class AbstractRequestHandler(BaseAbstractRequestHandler, BaseRequestHandler):
     """ A subclass of :class:`socketserver.BaseRequestHandler` dispatching
     incoming Modbus requests using the server's :attr:`route_map`.
 
