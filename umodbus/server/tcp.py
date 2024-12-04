@@ -31,7 +31,7 @@ class RequestHandler(AbstractRequestHandler):
     incoming Modbus TCP/IP request using the server's :attr:`route_map`.
 
     """
-    def get_meta_data(self, request_adu):
+    def get_meta_data(self, request_adu) -> Metadata:
         """" Extract MBAP header from request adu and return it. The dict has
         4 keys: transaction_id, protocol_id, length and unit_id.
 
