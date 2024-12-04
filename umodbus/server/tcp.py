@@ -74,3 +74,35 @@ class RequestHandler(AbstractRequestHandler):
         )
 
         return response_mbap + response_pdu
+
+
+class DummyRequestHandler(RequestHandler):
+    """
+    A dummy :py:class:`RequestHandler` with the protocol implementations
+    that can be used in the async request handler
+    """
+    def __init__(self):
+        pass
+
+class AsyncRequestHandler(AsyncAbstractRequestHandler):
+    """
+    A async version of :py:class:`RequestHandler`.
+
+    In order to reuse the modbus protocol parsing and payload
+    responses without having to split the code in multiple mixings,
+    multiple functions that are needed in the socketserver protocol
+    are overridden to do nothing at all.
+
+    """
+    def __init__(self):
+        # helper object that allows to reuse parsing functions
+        self._sync_request_handler = DummyRequestHandler()
+
+    def get_meta_data(self, request_adu):
+        return self._sync_request_handler.get_meta_data(request_adu)
+
+    def get_request_pdu(self, request_adu):
+        return self._sync_request_handler.get_request_pdu(request_adu)
+
+    def create_response_adu(self, meta_data, response_pdu):
+        return self._sync_request_handler.create_response_adu(meta_data, response_pdu)
