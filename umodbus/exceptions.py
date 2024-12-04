@@ -1,5 +1,6 @@
 class ModbusError(Exception):
     """ Base class for all Modbus related exception. """
+    error_code: int
     pass
 
 
